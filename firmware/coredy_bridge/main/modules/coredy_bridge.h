@@ -57,14 +57,25 @@ extern "C" {
 #define DP_MODEL            118
 #define DP_DATA_SAMPLE      119
 
-// Writable enum whose meaning is still unidentified. NOT static metadata --
-// the recon captures show the app writing 1 and 2 to it via cmd=0x06 while the
-// MCU always answers 4, i.e. every write is being rejected exactly the way
-// DP104 is when the robot isn't in an accepting state. Leading hypothesis is
-// water/mop level (the one DP the schema never covered, and the tests that
-// produced those writes ran with the tank removed). Routed to unknown_store
-// until the water-tank test settles it.
-#define DP_UNRESOLVED_120   120
+// Water level. Identified 2026-08-31 -- this was the last unmapped DP and the
+// only capability with no DP, and they turned out to be the same thing.
+//
+// Evidence, from writing values live and reading the MCU's echo:
+//   1 -> echoed 1            accepted
+//   2 -> echoed 2            accepted
+//   3 -> echoed 1            REJECTED (returns the previous value, the exact
+//                            rejection signature already documented for DP104)
+//   any, while stopped -> 4  idle/unavailable, not a settable level
+// So it is a state-gated enum, writable only while the robot is running --
+// which is why every observation before this was 4: nothing had ever written
+// to it while running.
+//
+// The valid range is 0/1/2 = low/medium/high: 1 and 2 are confirmed, 3 is
+// confirmed invalid, and the stock Tuya app exposed exactly three water
+// levels. 0 is inferred from that rather than directly observed, and taking
+// waterLevel('low') in the app is itself the confirming test -- an echo of 0
+// settles it.
+#define DP_WATER_LEVEL      120
 
 // Registers the already-initialized capability data pointers (call once
 // from main.c, right after capability_init()), then starts the UART and
@@ -114,6 +125,11 @@ void coredy_bridge_cmd_start(void);                            // -> DP112=1
 void coredy_bridge_cmd_pause(void);                             // -> DP112=0
 void coredy_bridge_cmd_go_home(void);                            // -> DP102=5
 void coredy_bridge_cmd_locate(void);                             // -> DP116=true
+
+// Writes DP120 directly, for mapping its still-unknown valid range. Backs
+// GET /dp120?value=N. See coredy_bridge_cmd_set_water_level() for what is
+// established so far.
+void coredy_bridge_probe_dp120(uint8_t value);
 
 #ifdef __cplusplus
 }

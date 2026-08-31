@@ -2,6 +2,7 @@
 #include "modules/log_buffer.h"
 #include "modules/unknown_store.h"
 #include "modules/diag.h"
+#include "modules/coredy_bridge.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -27,8 +28,23 @@ static const char *TAG = "HTTP";
 // Giving the API its own instance gives it its own task and socket set, so the
 // two are genuinely independent. Bounding the SSE handler on a timer instead
 // would only make the API *probably* available; this makes it always available.
+// Socket budget. CONFIG_LWIP_MAX_SOCKETS is the hard ceiling for the WHOLE
+// system -- both httpd instances, STDK's MQTT/TLS session, and the OTA client
+// all draw from it.
+//
+// v1.3.0 got this wrong and it bit immediately: :80 asked for 7 and :8080 for
+// 4, which is 11 listeners+connections against a limit of 10 before STDK or
+// OTA had taken any. The moment a browser attached, OTA started failing every
+// 30s with `esp-tls: Failed to create socket ... sock < 0`. Losing the ability
+// to fetch updates is the one failure this project cannot tolerate, so the OTA
+// client must never be the thing that gets starved.
+//
+// Now: LWIP raised to 16 (sdkconfig), httpd asks for 4 + 3, leaving comfortable
+// headroom for MQTT and OTA.
 #define HTTP_LOG_PORT 80
 #define HTTP_API_PORT 8080
+#define HTTP_LOG_MAX_SOCKETS 4
+#define HTTP_API_MAX_SOCKETS 3
 
 static httpd_handle_t server = NULL;      // :80   human-facing log viewer (blocking SSE)
 static httpd_handle_t api_server = NULL;  // :8080 machine-facing JSON API (never blocks)
@@ -159,6 +175,49 @@ static esp_err_t handle_unknown(httpd_req_t *req)
     return err;
 }
 
+// GET /dp120?value=N  -- write DP120 (water level) directly.
+//
+// DP120 is now mapped to the waterLevel capability, so this is no longer how
+// you'd normally set it. It stays because it is the only way to write a value
+// the capability enum cannot express -- confirming that 0 really is the third
+// level, or checking what a deliberately out-of-range value does -- without
+// cutting a firmware release per experiment.
+//
+// Deliberately restricted to DP120 and to values 0-4: an unauthenticated
+// "write any DP to the robot's MCU" endpoint on the LAN is a much larger
+// surface than this needs, and everything else worth commanding is already
+// reachable through SmartThings.
+static esp_err_t handle_dp120(httpd_req_t *req)
+{
+    long value = -1;
+    size_t qlen = httpd_req_get_url_query_len(req) + 1;
+    if (qlen > 1 && qlen < 64) {
+        char q[64];
+        char v[8];
+        if (httpd_req_get_url_query_str(req, q, qlen) == ESP_OK &&
+            httpd_query_key_value(q, "value", v, sizeof(v)) == ESP_OK) {
+            value = strtol(v, NULL, 10);
+        }
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    if (value < 0 || value > 4) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        return httpd_resp_sendstr(req,
+            "{\"error\":\"pass ?value=N with N in 0..4\","
+            "\"known\":\"0=low 1=medium 2=high; 3 rejected; 4 = idle/unavailable\"}");
+    }
+
+    coredy_bridge_probe_dp120((uint8_t)value);
+
+    char buf[256];
+    int n = snprintf(buf, sizeof(buf),
+        "{\"sent\":%ld,\"note\":\"watch the log for the MCU reply; an echo of %ld means "
+        "accepted, a different value means rejected. DP120 only accepts writes while the "
+        "robot is RUNNING -- parked, it always answers 4.\"}", value, value);
+    return httpd_resp_send(req, buf, n);
+}
+
 static esp_err_t handle_status(httpd_req_t *req)
 {
     char buf[768];
@@ -180,9 +239,10 @@ esp_err_t http_server_start(void)
         config.server_port = HTTP_LOG_PORT;
         config.ctrl_port = 32768;
         config.stack_size = 6144;
-        /* SSE handlers hold the connection open. Reserve headroom for short
-         * requests on top of up to 4 long-lived SSE clients. */
-        config.max_open_sockets = 7;
+        /* SSE handlers hold the connection open, but only one can ever be
+         * served at a time anyway (single task), so a big pool bought nothing
+         * and cost sockets the OTA client needed. */
+        config.max_open_sockets = HTTP_LOG_MAX_SOCKETS;
         config.lru_purge_enable = true;
 
         esp_err_t err = httpd_start(&server, &config);
@@ -206,7 +266,7 @@ esp_err_t http_server_start(void)
          * with the UDP control socket already bound. */
         api_cfg.ctrl_port = 32769;
         api_cfg.stack_size = 4096;
-        api_cfg.max_open_sockets = 4;
+        api_cfg.max_open_sockets = HTTP_API_MAX_SOCKETS;
         api_cfg.lru_purge_enable = true;
 
         esp_err_t err = httpd_start(&api_server, &api_cfg);
@@ -217,9 +277,11 @@ esp_err_t http_server_start(void)
         }
         httpd_uri_t unknown_uri = { .uri = "/unknown", .method = HTTP_GET, .handler = handle_unknown };
         httpd_uri_t status_uri  = { .uri = "/status",  .method = HTTP_GET, .handler = handle_status };
+        httpd_uri_t dp120_uri   = { .uri = "/dp120",   .method = HTTP_GET, .handler = handle_dp120 };
         httpd_register_uri_handler(api_server, &unknown_uri);
         httpd_register_uri_handler(api_server, &status_uri);
-        ESP_LOGI(TAG, "API up on :%d (/unknown, /status)", HTTP_API_PORT);
+        httpd_register_uri_handler(api_server, &dp120_uri);
+        ESP_LOGI(TAG, "API up on :%d (/unknown, /status, /dp120)", HTTP_API_PORT);
     }
 
     return ESP_OK;

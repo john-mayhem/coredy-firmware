@@ -44,6 +44,7 @@ static char s_pub_opstate[PUB_STR_MAX];
 static char s_pub_fault[128];
 static char s_pub_cleaningMode[PUB_STR_MAX];
 static char s_pub_suction[PUB_STR_MAX];
+static char s_pub_waterLevel[PUB_STR_MAX];
 static int  s_pub_battery = -1;
 static int  s_pub_area_raw = -1;
 static int  s_pub_brush = -1;
@@ -88,6 +89,7 @@ static void reset_publish_cache(void)
     s_pub_fault[0] = '\0';
     s_pub_cleaningMode[0] = '\0';
     s_pub_suction[0] = '\0';
+    s_pub_waterLevel[0] = '\0';
     s_pub_battery = -1;
     s_pub_area_raw = -1;
     s_pub_brush = -1;
@@ -237,6 +239,36 @@ static void handle_dp102(uint32_t v)
     }
 }
 
+// DP120 -> waterLevel. See coredy_bridge.h for how the value range was
+// established.
+static void handle_dp120(uint32_t v)
+{
+    if (v == 4) {
+        // Not a level -- the robot is stopped, so the setting is inactive.
+        // Deliberately does NOT overwrite the tile: the chosen level still
+        // stands, it just isn't being applied right now, and blanking it every
+        // time the robot parks would be worse than leaving the last value.
+        ESP_LOGI(TAG, "DP120=4 (idle -- water level inactive while stopped)");
+        return;
+    }
+
+    const char *level;
+    switch (v) {
+        case 0: level = "low"; break;
+        case 1: level = "medium"; break;
+        case 2: level = "high"; break;
+        default:
+            // 3 is known-invalid; anything else is genuinely new. Record it
+            // rather than silently dropping a value we've never characterised.
+            ESP_LOGW(TAG, "DP120=%lu is outside the confirmed 0-2 range", (unsigned long)v);
+            return;
+    }
+    if (s_waterLevel && changed_str(s_pub_waterLevel, sizeof(s_pub_waterLevel), level)) {
+        s_waterLevel->set_waterLevel_value(s_waterLevel, level);
+        s_waterLevel->attr_waterLevel_send(s_waterLevel);
+    }
+}
+
 static void handle_dp104(uint32_t v)
 {
     const char *level;
@@ -320,18 +352,8 @@ static void on_dp(const tuya_dp_t *dp)
             // Understood DPs with no matching capability in this profile --
             // inert on purpose, not logged as unknown.
             break;
-        case DP_UNRESOLVED_120:
-            // NOT inert, and NOT static metadata as previously assumed -- see
-            // coredy_bridge_cmd_set_water_level() for the full reasoning and
-            // the live experiment that drives it.
-            //
-            // Logged loudly as well as stored, because during the experiment
-            // this is the reply we are actually waiting on and it needs to be
-            // obvious in the live stream, not just in /unknown.
-            ESP_LOGW(TAG, "DP120 reply = %lu (%s)", (unsigned long)v,
-                     v == 4 ? "4 = rejected/unavailable, as always seen so far"
-                            : "NOT 4 -- MCU ACCEPTED a DP120 write, this identifies the DP");
-            log_unknown_dp(dp->dpid, dp->dptype, dp->value, dp->len);
+        case DP_WATER_LEVEL:
+            handle_dp120(v);
             break;
         default:
             log_unknown_dp(dp->dpid, dp->dptype, dp->value, dp->len);
@@ -505,15 +527,22 @@ void coredy_bridge_cmd_set_suction_level(const char *value)
 void coredy_bridge_cmd_set_water_level(const char *value)
 {
     uint8_t dp;
-    if (!strcmp(value, "low")) dp = 1;
-    else if (!strcmp(value, "medium")) dp = 2;
-    else if (!strcmp(value, "high")) dp = 3;
+    if (!strcmp(value, "low")) dp = 0;
+    else if (!strcmp(value, "medium")) dp = 1;
+    else if (!strcmp(value, "high")) dp = 2;
     else { ESP_LOGW(TAG, "unknown waterLevel '%s', not sending", value); return; }
 
-    ESP_LOGW(TAG, "EXPERIMENT: writing DP120=%u for waterLevel('%s') -- "
-                  "check /unknown for the MCU's reply (echo of %u = accepted, 4 = rejected)",
-             dp, value, dp);
-    tuya_send_cmd06_enum(DP_UNRESOLVED_120, dp);
+    // Remember: DP120 is state-gated. A write sent while the robot is parked
+    // is answered with 4 and changes nothing -- that is the MCU refusing, not
+    // a bug here.
+    ESP_LOGI(TAG, "waterLevel('%s') -> DP120=%u", value, dp);
+    tuya_send_cmd06_enum(DP_WATER_LEVEL, dp);
+}
+
+void coredy_bridge_probe_dp120(uint8_t value)
+{
+    ESP_LOGW(TAG, "PROBE: writing DP120=%u -- watch for the reply below", value);
+    tuya_send_cmd06_enum(DP_WATER_LEVEL, value);
 }
 
 void coredy_bridge_cmd_start(void)   { tuya_send_cmd06_enum(DP_ACTIVATE, 1); }
