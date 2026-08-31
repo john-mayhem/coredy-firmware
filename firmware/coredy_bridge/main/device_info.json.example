@@ -1,0 +1,8 @@
+{
+  "deviceInfo": {
+    "firmwareVersion": "your_firmware_version_label",
+    "privateKey": "REPLACE_WITH_YOUR_PRIVATE_KEY",
+    "publicKey": "REPLACE_WITH_YOUR_PUBLIC_KEY",
+    "serialNumber": "REPLACE_WITH_YOUR_SERIAL"
+  }
+}

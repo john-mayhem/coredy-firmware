@@ -1,0 +1,19 @@
+{
+  "onboardingConfig": {
+    "deviceOnboardingId": "YourDeviceName",
+    "mnId": "XXXX",
+    "setupId": "001",
+    "vid": "REPLACE_WITH_YOUR_DEVICE_PROFILE_VID",
+    "deviceTypeId": "RobotCleaner",
+    "ownershipValidationTypes": [
+      "JUSTWORKS"
+    ],
+    "identityType": "ED25519",
+    "deviceIntegrationProfileKey": {
+      "id": "REPLACE_WITH_YOUR_DIP_ID",
+      "majorVersion": 0,
+      "minorVersion": 1
+    },
+    "productId": "REPLACE_WITH_YOUR_PRODUCT_ID"
+  }
+}

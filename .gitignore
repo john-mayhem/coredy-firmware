@@ -1,0 +1,14 @@
+# Per-device SmartThings identity. device_info.json carries the device's
+# ED25519 PRIVATE key -- it must never be committed to this (public) repo.
+# onboarding_config.json carries account-specific Developer Workspace ids.
+# Both ship here as .example files; generate your own (see firmware README).
+firmware/coredy_bridge/main/device_info.json
+firmware/coredy_bridge/main/onboarding_config.json
+
+# OTA signing key. Kept offline, outside any repo, always.
+*_private.pem
+
+# Build output
+build/
+managed_components/
+sdkconfig.old
