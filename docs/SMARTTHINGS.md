@@ -12,16 +12,18 @@ robot. Every enum invented in that exercise later matched real hardware — incl
 ## Device profile
 
 - Device type `RobotCleaner` (OCF `oic.d.robotcleaner`)
-- `mnId` `LbTy`, `mnmn` `spikyshape04153`
-- Profile id `04ae90b6-ba5c-45c2-acc2-d021cc7ba820`
 - `metadata.mainState` = `robotCleanerOperatingState` (drives the detail-view hero card)
 - `metadata.mainAction` = custom `cleaningMode` (drives the dashboard quick-action button) —
   two independent settings, easy to conflate.
 
+The account-specific values — `mnId`, `mnmn`, profile id, `vid`, capability namespace — are
+assigned by the Developer Workspace and live in `main/onboarding_config.json`, which is
+gitignored. This doc writes the custom namespace as `ns.`.
+
 Device identity is generated with STDK keygen and registered as a Test Device:
 
 ```bash
-iot-core/tools/keygen/stdk-keygen.py --mnid LbTy --firmware <label> --path <app>/main/ --qr
+iot-core/tools/keygen/stdk-keygen.py --mnid <mnId> --firmware <label> --path <app>/main/ --qr
 # needs a venv: pynacl, qrcode, pillow
 ```
 
@@ -39,7 +41,7 @@ iot-core/tools/keygen/stdk-keygen.py --mnid LbTy --firmware <label> --path <app>
 | `ns.areaCleaned` — number, `m^2` | DP14 | **custom** — no stock capability tracks cleaned area |
 | `ns.consumables` — brush / rollerBrush / filter %, all on one capability | DP109/110/111 | **custom**, for UI reasons — see the multi-`detailView` note below |
 
-`ns` = namespace `musicimage12631`. Stock `robotCleanerCleaningMode` and `robotCleanerTurboMode`
+Stock `robotCleanerCleaningMode` and `robotCleanerTurboMode`
 are both listed by SmartThings as **"proposed"** status, which was part of the reason to stop
 fighting their enums and go custom.
 
