@@ -1,0 +1,4 @@
+# Force console/log output onto the native USB-Serial/JTAG peripheral,
+# freeing UART0 and UART1 entirely for our own sniffer taps.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
