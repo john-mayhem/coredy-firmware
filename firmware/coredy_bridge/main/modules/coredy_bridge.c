@@ -71,6 +71,30 @@ static bool changed_int(int *cache, int value)
     return true;
 }
 
+// Forget everything we think the cloud knows.
+//
+// Necessary because the caches above suppress re-publishing: without this, a
+// cloud reconnect would re-hydrate our LOCAL state from the STM32 (cmd=0x08)
+// and then publish none of it, because every value still matches the cache
+// from before the disconnect. Any divergence SmartThings picked up while we
+// were away would stay stale forever. Before the caches existed the constant
+// unconditional re-publishing masked this by accident.
+//
+// Called immediately before each query-all, so the burst that answers it
+// republishes the full picture.
+static void reset_publish_cache(void)
+{
+    s_pub_opstate[0] = '\0';
+    s_pub_fault[0] = '\0';
+    s_pub_cleaningMode[0] = '\0';
+    s_pub_suction[0] = '\0';
+    s_pub_battery = -1;
+    s_pub_area_raw = -1;
+    s_pub_brush = -1;
+    s_pub_roller = -1;
+    s_pub_hepa = -1;
+}
+
 static uint32_t read_be(const uint8_t *v, uint16_t len)
 {
     uint32_t val = 0;
@@ -428,6 +452,7 @@ void coredy_bridge_on_st_status(st_device_status status)
 
     if (status == ST_DEVICE_STATUS_CLOUD_CONNECTED && !s_did_initial_query_all) {
         s_did_initial_query_all = true;
+        reset_publish_cache();          // so the answering burst actually republishes
         tuya_send_frame(0x08, NULL, 0); // hydrate our capability shadow with real STM32 state
     }
     if (status != ST_DEVICE_STATUS_CLOUD_CONNECTED) {
