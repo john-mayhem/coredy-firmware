@@ -39,7 +39,14 @@ static const char *TAG = "COREDY_OTA";
 // How long a freshly-installed image gets to prove it can still reach the
 // update server before we deliberately reboot into the bootloader's rollback.
 // See the s_pending_verify comment below.
-#define COREDY_OTA_VERIFY_DEADLINE_MS   (5 * 60 * 1000)
+//
+// 10 minutes = 20 attempts at the 30s poll interval. Normal boots mark valid
+// at ~37s (assoc ~6s, cloud ~17s, first tick at 30s), so this is ~16x margin.
+// Deliberately not tighter: the failure this guards against is permanent, but
+// a transient outage that outlasts the deadline costs a rollback and then a
+// re-download once connectivity returns -- i.e. flash writes. Generous is
+// cheap; too tight risks cycling on a flaky link.
+#define COREDY_OTA_VERIFY_DEADLINE_MS   (10 * 60 * 1000)
 
 // True when the bootloader started us in PENDING_VERIFY, i.e. we are a
 // just-installed OTA image on probation.
