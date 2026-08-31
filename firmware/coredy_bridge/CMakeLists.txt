@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 3.5)
 # runtime via esp_app_get_description(), compared against versioninfo.json
 # by modules/coredy_ota.c. Bump this (and re-run ota/make_release.sh) to
 # cut a release; nothing else needs to change.
-set(PROJECT_VER "1.2.0")
+set(PROJECT_VER "1.3.0")
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 

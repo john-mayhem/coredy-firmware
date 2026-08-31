@@ -321,14 +321,16 @@ static void on_dp(const tuya_dp_t *dp)
             // inert on purpose, not logged as unknown.
             break;
         case DP_UNRESOLVED_120:
-            // NOT inert, and NOT static metadata as previously assumed. The
-            // recon captures show the app sending DP120=1 and DP120=2 as
-            // cmd=0x06 writes while the MCU always answers cmd=0x07 with 4 --
-            // i.e. a writable control whose every write is being rejected,
-            // the same accept/reject signature already documented for DP104.
-            // Route it into the unknown store so the value pattern is
-            // recorded for the workstation until we identify it (leading
-            // hypothesis: water/mop level, the one confirmed-missing DP).
+            // NOT inert, and NOT static metadata as previously assumed -- see
+            // coredy_bridge_cmd_set_water_level() for the full reasoning and
+            // the live experiment that drives it.
+            //
+            // Logged loudly as well as stored, because during the experiment
+            // this is the reply we are actually waiting on and it needs to be
+            // obvious in the live stream, not just in /unknown.
+            ESP_LOGW(TAG, "DP120 reply = %lu (%s)", (unsigned long)v,
+                     v == 4 ? "4 = rejected/unavailable, as always seen so far"
+                            : "NOT 4 -- MCU ACCEPTED a DP120 write, this identifies the DP");
             log_unknown_dp(dp->dpid, dp->dptype, dp->value, dp->len);
             break;
         default:
@@ -482,13 +484,36 @@ void coredy_bridge_cmd_set_suction_level(const char *value)
     tuya_send_cmd06_enum(DP_FAN_SPEED, dp);
 }
 
+// LIVE EXPERIMENT (v1.3.0): drive DP120 and see whether the MCU accepts it.
+//
+// DP120 is the only DP still unidentified, and water level is the only
+// documented capability with no DP -- so this tests both at once. The recon
+// captures show the *Tuya app* writing DP120=1 and DP120=2 via cmd=0x06 while
+// the MCU always answered 4. We removed the WR3, so the Tuya app can no longer
+// reach this robot at all: nothing writes DP120 any more, which is exactly why
+// /unknown only ever records the MCU's own 4. To reproduce the app's write we
+// have to be the one sending it.
+//
+// Reading the result: watch DP120 in GET /unknown. It dedupes per value, so an
+// echo of the value we asked for appears as a new raw=01/02/03 entry (ACCEPTED
+// -- DP120 is real, and with a tank fitted almost certainly water level), while
+// a raw=04 entry with a rising count means REJECTED, the same way DP104 is
+// rejected when the robot isn't in a state that accepts it.
+//
+// Values 1 and 2 are known-safe (the Tuya app itself sent them in normal use).
+// 3 is extrapolated for the third enum slot and has never been observed.
 void coredy_bridge_cmd_set_water_level(const char *value)
 {
-    // No confirmed DP for water level exists yet (Desktop\CoredyR750\PROGRESS.md
-    // -- "not found anywhere"). The capability exists for UI completeness only.
-    // DP120 is the leading candidate; once the water-tank test confirms it this
-    // becomes a real tuya_send_cmd06_enum(DP_UNRESOLVED_120, ...) call.
-    ESP_LOGW(TAG, "setWaterLevel('%s') requested but no backing DP exists yet -- ignored", value);
+    uint8_t dp;
+    if (!strcmp(value, "low")) dp = 1;
+    else if (!strcmp(value, "medium")) dp = 2;
+    else if (!strcmp(value, "high")) dp = 3;
+    else { ESP_LOGW(TAG, "unknown waterLevel '%s', not sending", value); return; }
+
+    ESP_LOGW(TAG, "EXPERIMENT: writing DP120=%u for waterLevel('%s') -- "
+                  "check /unknown for the MCU's reply (echo of %u = accepted, 4 = rejected)",
+             dp, value, dp);
+    tuya_send_cmd06_enum(DP_UNRESOLVED_120, dp);
 }
 
 void coredy_bridge_cmd_start(void)   { tuya_send_cmd06_enum(DP_ACTIVATE, 1); }

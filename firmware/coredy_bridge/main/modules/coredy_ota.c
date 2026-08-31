@@ -484,6 +484,9 @@ void coredy_ota_start(void)
     xTaskCreate(ota_task, "coredy_ota", 8192, NULL, 5, NULL);
 }
 
+bool coredy_ota_is_pending_verify(void) { return s_pending_verify; }
+bool coredy_ota_has_fetched_ok(void)    { return s_fetch_ok_once; }
+
 void coredy_ota_mark_valid(void)
 {
     static bool done = false;

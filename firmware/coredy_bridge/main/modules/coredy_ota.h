@@ -26,6 +26,12 @@ extern "C" {
 // connection yet, and the next 30s tick tries again.
 void coredy_ota_start(void);
 
+// Exposed for GET /status. `pending_verify` means the bootloader started this
+// image on probation; `fetched_ok` means it has proven it can still reach the
+// update server (which is what cancels that probation).
+bool coredy_ota_is_pending_verify(void);
+bool coredy_ota_has_fetched_ok(void);
+
 // Call once the app has proven itself healthy (first successful cloud
 // connect) to cancel the bootloader's rollback-on-next-boot-failure guard.
 // Idempotent -- safe to call more than once.

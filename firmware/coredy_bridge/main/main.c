@@ -45,14 +45,13 @@
 #include "modules/wifi_events.h"
 #include "modules/caps_lock.h"
 #include "modules/unknown_store.h"
+#include "modules/diag.h"
 
 static const char *TAG = "COREDY_MAIN";
 
-// RTC memory survives soft resets -- crash/boot diagnostics for a device
-// that will be sealed inside the reassembled robot with no easy access.
-RTC_NOINIT_ATTR static uint32_t rtc_boot_count;
-RTC_NOINIT_ATTR static uint32_t rtc_crash_magic;
-#define RTC_CRASH_MAGIC 0xC0DEDA11
+// Boot/crash diagnostics moved to modules/diag.c so they can also be served
+// from GET /status -- on a sealed device the boot banner alone is useless,
+// since nobody is attached to the log stream when it matters.
 
 // onboarding_config_start is null-terminated string
 extern const uint8_t onboarding_config_start[] asm("_binary_onboarding_config_json_start");
@@ -241,40 +240,11 @@ void app_main(void)
     caps_lock_init();
     unknown_store_init();
 
+    diag_init();
+
     const esp_app_desc_t *app_desc = esp_app_get_description();
     ESP_LOGI(TAG, "Coredy R750 bridge -- version %s", app_desc->version);
     ESP_LOGI(TAG, "Free heap: %lu bytes", esp_get_free_heap_size());
-
-    esp_reset_reason_t reset_reason = esp_reset_reason();
-    const char *reset_reason_str = "UNKNOWN";
-    switch (reset_reason) {
-        case ESP_RST_POWERON:   reset_reason_str = "POWER_ON"; break;
-        case ESP_RST_EXT:       reset_reason_str = "EXTERNAL"; break;
-        case ESP_RST_SW:        reset_reason_str = "SOFTWARE"; break;
-        case ESP_RST_PANIC:     reset_reason_str = "PANIC"; break;
-        case ESP_RST_INT_WDT:   reset_reason_str = "INT_WDT"; break;
-        case ESP_RST_TASK_WDT:  reset_reason_str = "TASK_WDT"; break;
-        case ESP_RST_WDT:       reset_reason_str = "WDT"; break;
-        case ESP_RST_DEEPSLEEP: reset_reason_str = "DEEPSLEEP"; break;
-        case ESP_RST_BROWNOUT:  reset_reason_str = "BROWNOUT"; break;
-        case ESP_RST_SDIO:      reset_reason_str = "SDIO"; break;
-        default: break;
-    }
-    ESP_LOGW(TAG, "Reset reason: %s (%d)", reset_reason_str, reset_reason);
-
-    if (rtc_crash_magic == RTC_CRASH_MAGIC) {
-        rtc_boot_count++;
-        if (reset_reason == ESP_RST_PANIC || reset_reason == ESP_RST_INT_WDT ||
-            reset_reason == ESP_RST_TASK_WDT || reset_reason == ESP_RST_WDT ||
-            reset_reason == ESP_RST_BROWNOUT) {
-            ESP_LOGE(TAG, "!!! CRASH DETECTED !!! Boot #%lu", rtc_boot_count);
-        }
-    } else {
-        rtc_boot_count = 1;
-        ESP_LOGI(TAG, "Fresh boot (power cycle or first run)");
-    }
-    rtc_crash_magic = RTC_CRASH_MAGIC;
-    ESP_LOGI(TAG, "Boot count: %lu", rtc_boot_count);
 
     esp_err_t nvs_err = nvs_flash_init();
     if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {

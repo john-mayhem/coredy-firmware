@@ -1,6 +1,7 @@
 #include "http_server.h"
 #include "modules/log_buffer.h"
 #include "modules/unknown_store.h"
+#include "modules/diag.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -9,7 +10,28 @@
 #include <stdlib.h>
 
 static const char *TAG = "HTTP";
-static httpd_handle_t server = NULL;
+
+// TWO independent server instances, on purpose.
+//
+// esp_http_server dispatches every request from a SINGLE task (one
+// httpd_thread, one select loop) and this IDF fork has no
+// httpd_req_async_handler_begin(). The /logs SSE handler below never returns --
+// it holds that task for as long as a browser is attached. So while anyone has
+// the log viewer open, every other endpoint on that instance is unreachable.
+//
+// That is not theoretical: on 2026-08-31 /unknown timed out repeatedly from the
+// workstation while the log page was open in a browser, and started answering
+// the moment the tab was closed. Since /unknown is the machine-facing data path
+// out of a sealed robot, it cannot be blockable by a human looking at logs.
+//
+// Giving the API its own instance gives it its own task and socket set, so the
+// two are genuinely independent. Bounding the SSE handler on a timer instead
+// would only make the API *probably* available; this makes it always available.
+#define HTTP_LOG_PORT 80
+#define HTTP_API_PORT 8080
+
+static httpd_handle_t server = NULL;      // :80   human-facing log viewer (blocking SSE)
+static httpd_handle_t api_server = NULL;  // :8080 machine-facing JSON API (never blocks)
 
 static const char index_html[] =
 "<!DOCTYPE html><html><head><title>Coredy Bridge Logs</title>"
@@ -24,9 +46,15 @@ static const char index_html[] =
 "a{color:#5af}"
 "</style></head><body>"
 "<div id=st class=off>connecting...</div>"
-"<div><a href='/unknown'>/unknown</a> - unrecognised frames seen since boot (JSON)</div>"
+"<div id=api></div>"
 "<div id=log></div>"
 "<script>"
+/* The API lives on :8080, not here -- this page's SSE stream permanently
+   occupies :80's single request task, so those endpoints must not share it. */
+"const A=document.getElementById('api');"
+"A.innerHTML=\"API (separate port, works while this stream is open): \""
+"  +\"<a href='http://\"+location.hostname+\":8080/status'>/status</a> \""
+"  +\"<a href='http://\"+location.hostname+\":8080/unknown'>/unknown</a>\";"
 "const L=document.getElementById('log'),S=document.getElementById('st');"
 "const e=new EventSource('/logs');"
 "e.onopen=()=>{S.textContent='live';S.className='live'};"
@@ -131,32 +159,68 @@ static esp_err_t handle_unknown(httpd_req_t *req)
     return err;
 }
 
+static esp_err_t handle_status(httpd_req_t *req)
+{
+    char buf[768];
+    size_t n = diag_render_status_json(buf, sizeof(buf));
+    httpd_resp_set_type(req, "application/json");
+    if (n == 0) {
+        return httpd_resp_sendstr(req, "{\"error\":\"render failed\"}");
+    }
+    return httpd_resp_send(req, buf, n);
+}
+
 esp_err_t http_server_start(void)
 {
-    if (server) return ESP_OK;
+    if (server && api_server) return ESP_OK;
 
-    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.server_port = 80;
-    config.stack_size = 6144;
-    /* SSE handlers hold the connection open. Reserve headroom for short
-     * requests on top of up to 4 long-lived SSE clients. */
-    config.max_open_sockets = 7;
-    config.lru_purge_enable = true;
+    /* ---- :80 human-facing log viewer ---- */
+    if (!server) {
+        httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+        config.server_port = HTTP_LOG_PORT;
+        config.ctrl_port = 32768;
+        config.stack_size = 6144;
+        /* SSE handlers hold the connection open. Reserve headroom for short
+         * requests on top of up to 4 long-lived SSE clients. */
+        config.max_open_sockets = 7;
+        config.lru_purge_enable = true;
 
-    esp_err_t err = httpd_start(&server, &config);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "httpd_start failed: %s", esp_err_to_name(err));
-        server = NULL;
-        return err;
+        esp_err_t err = httpd_start(&server, &config);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "log httpd_start failed: %s", esp_err_to_name(err));
+            server = NULL;
+            return err;
+        }
+        httpd_uri_t index_uri = { .uri = "/",     .method = HTTP_GET, .handler = handle_index };
+        httpd_uri_t logs_uri  = { .uri = "/logs", .method = HTTP_GET, .handler = handle_logs };
+        httpd_register_uri_handler(server, &index_uri);
+        httpd_register_uri_handler(server, &logs_uri);
+        ESP_LOGI(TAG, "log viewer up on :%d", HTTP_LOG_PORT);
     }
 
-    httpd_uri_t index_uri   = { .uri = "/",        .method = HTTP_GET, .handler = handle_index };
-    httpd_uri_t logs_uri    = { .uri = "/logs",    .method = HTTP_GET, .handler = handle_logs };
-    httpd_uri_t unknown_uri = { .uri = "/unknown", .method = HTTP_GET, .handler = handle_unknown };
-    httpd_register_uri_handler(server, &index_uri);
-    httpd_register_uri_handler(server, &logs_uri);
-    httpd_register_uri_handler(server, &unknown_uri);
+    /* ---- :8080 machine-facing API, deliberately separate (see note above) ---- */
+    if (!api_server) {
+        httpd_config_t api_cfg = HTTPD_DEFAULT_CONFIG();
+        api_cfg.server_port = HTTP_API_PORT;
+        /* Must differ from the other instance's ctrl_port or httpd_start fails
+         * with the UDP control socket already bound. */
+        api_cfg.ctrl_port = 32769;
+        api_cfg.stack_size = 4096;
+        api_cfg.max_open_sockets = 4;
+        api_cfg.lru_purge_enable = true;
 
-    ESP_LOGI(TAG, "HTTP log server up on :80");
+        esp_err_t err = httpd_start(&api_server, &api_cfg);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "api httpd_start failed: %s", esp_err_to_name(err));
+            api_server = NULL;
+            return err;
+        }
+        httpd_uri_t unknown_uri = { .uri = "/unknown", .method = HTTP_GET, .handler = handle_unknown };
+        httpd_uri_t status_uri  = { .uri = "/status",  .method = HTTP_GET, .handler = handle_status };
+        httpd_register_uri_handler(api_server, &unknown_uri);
+        httpd_register_uri_handler(api_server, &status_uri);
+        ESP_LOGI(TAG, "API up on :%d (/unknown, /status)", HTTP_API_PORT);
+    }
+
     return ESP_OK;
 }
