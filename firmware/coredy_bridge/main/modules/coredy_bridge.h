@@ -39,7 +39,7 @@ extern "C" {
 #define COREDY_UART_RX_GPIO 17
 #define COREDY_UART_TX_GPIO 16
 
-// Confirmed DP ids (Desktop\CoredyR750\PROGRESS.md)
+// Confirmed DP ids (docs/PROTOCOL.md)
 #define DP_POWER            1
 #define DP_AREA_CLEANED     14
 #define DP_ERROR            17

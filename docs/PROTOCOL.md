@@ -36,15 +36,41 @@ DP types: `0x01` bool, `0x02` 4-byte big-endian int, `0x03` string, `0x04` enum 
 
 ### Command bytes
 
+The **module** is the generic, reusable half — it does not inherently know what product it is
+attached to — so it drives the handshake and the STM32 answers. The bridge plays the module role.
+
 | Cmd | Direction | Meaning |
 |---|---|---|
-| `0x00` | both | Heartbeat ping/ack. Stock WR3 sends one every **15.0 s** per side (measured over a 2100 s capture); the bridge uses 10 s deliberately. |
-| `0x01` | both | Product info. Response payload is literal ASCII JSON: `{"p":"eg0tdmbmozbtlzyg","v":"1.0.0","m":0}` |
-| `0x02` | both | MCU conf / working mode. Boilerplate. |
-| `0x03` | Wi-Fi→MCU | Wi-Fi state. Boilerplate. |
-| **`0x06`** | **Wi-Fi→MCU** | **Command down to the MCU** — what fires when a control is tapped. |
-| **`0x07`** | **MCU→Wi-Fi** | **Status report up from the MCU** — ambient chatter plus command acks. |
-| `0x08` | Wi-Fi→MCU | "Query all" — MCU dumps every DP it holds in one burst. |
+| `0x00` | both | Heartbeat ping/ack. Stock WR3 sends one every **15.0 s** per side (measured over a 2100 s capture); the bridge uses 10 s. Direction is genuinely symmetric, so **do not auto-echo it** — see the echo-loop note below. |
+| `0x01` | module → STM32 | Product info. Module sends an empty query; STM32 answers with literal ASCII JSON: `{"p":"eg0tdmbmozbtlzyg","v":"1.0.0","m":0}` |
+| `0x02` | module → STM32 | MCU conf / working mode query. Module sends empty, STM32 empty-acks. |
+| **`0x03`** | **module → STM32** | **Network state, 1-byte enum.** Not boilerplate — see below. |
+| **`0x05`** | **STM32 → module** | **Network reset**, payload fixed `0x00`. See below. |
+| **`0x06`** | **module → STM32** | **Command down** — DP payload, what fires when a control is tapped. |
+| **`0x07`** | **STM32 → module** | **Status report** — DP payload, spontaneous and in answer to `0x08`. Never acked. |
+| `0x08` | module → STM32 | "Query all" — STM32 dumps every DP it holds in one burst. |
+
+**Version byte**: the module's frames stamp `ver=0x00` and the STM32's stamp `ver=0x03`. That is
+each side's own fixed byte, *not* a negotiated protocol version. The bridge stamps `0x00` to
+match the real WR3 and does not validate the incoming one.
+
+### `0x03` — network state (the Wi-Fi icon)
+
+`0` pairing/smartconfig · `2` connecting · `3` router-connected · `4` cloud-connected.
+
+The module is the side that actually knows the connection state, so **it must push this enum
+itself as its own state progresses** — the STM32 does not derive it, and it drives the robot's
+Wi-Fi icon LED directly off this value. Push it wrong and the icon lies. `0` and `4` are
+confirmed anchors (fired exactly on entering pairing mode, and on cloud connect); `2` and `3` are
+best-effort mappings in the bridge, not independently observed.
+
+### `0x05` — network reset
+
+The STM32 sends this when the **physical button is long-pressed** (confirmed via two independent
+long-presses). The module empty-acks and then performs a real onboarding reset — the stock WR3
+was observed replaying its whole `0x01`/`0x02` handshake and announcing `0x03` state `0`
+immediately afterward. A bridge that only acks and does nothing will silently ignore the user's
+factory-reset gesture.
 
 ## DP map
 
@@ -110,6 +136,13 @@ and 3 invalid, 0/1/2 is the only fit. Selecting `low` in the app while running (
   apart from heartbeats.
 - **Tray presence broadcasts nothing.** Removing/inserting the dust bin or water tank changes
   which controls the stock app shows but produces zero wire traffic.
+- **Never auto-echo the heartbeat.** Replying to every received `0x00` with another `0x00` sends
+  the STM32, which does something similar, into a runaway ping-pong that floods the UART as fast
+  as both sides can process bytes and silently drowns out real traffic — the symptom was an app
+  "Start" tap having no visible effect at all. Send periodic pings on a timer only.
+- **The TX/RX labels have been mixed up twice on this project** — once on the sniffer's GPIO6/7
+  and once on the bridge's solder job. Both presented as total silence in *both* directions.
+  If nothing arrives, suspect the labelling before the code.
 
 ## Sniffer rig
 

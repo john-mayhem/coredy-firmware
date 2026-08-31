@@ -2,7 +2,7 @@
 // Speaks TuyaMCU UART to the real STM32 on one side (modules/tuya_uart.c,
 // modules/coredy_bridge.c) and SmartThings Direct Connected Device on the
 // other, using the exact "Maya Robot" capability profile already validated
-// on the dummy device (Desktop\CoredyR750\SMARTTHINGS_DUMMY_DCD.md).
+// on the dummy device (docs/SMARTTHINGS.md).
 //
 // Target chip: classic ESP32 (confirmed hardware on hand 2026-08-31, not the
 // S3 originally planned -- see project memory).

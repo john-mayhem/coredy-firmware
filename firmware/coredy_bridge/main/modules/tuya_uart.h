@@ -9,8 +9,8 @@
 // Frame: 55 AA [ver] [cmd] [len_hi] [len_lo] [payload...] [checksum]
 // checksum = sum of all preceding bytes mod 256.
 //
-// Empirically confirmed (Desktop\CoredyR750\PROGRESS.md + 2026-08-31 re-sniff,
-// corrected for a tap-label mixup on that resniff -- see project memory):
+// Empirically confirmed (docs/PROTOCOL.md; the 2026-08-31 re-sniff below is
+// corrected for a tap-label mixup made during that capture):
 //   - We play the "module" role. Our own frames always stamp ver=0x00 -- this
 //     matches the real WR3's own byte, NOT a generic "protocol version".
 //   - The STM32 always stamps ver=0x03 on its frames. We don't validate this,
