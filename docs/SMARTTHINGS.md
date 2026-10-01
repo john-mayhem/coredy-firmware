@@ -48,6 +48,11 @@ fighting their enums and go custom.
 Dropped deliberately: `robotCleanerMovement` and `batteryLevel` — no independent DP backing,
 redundant with OperatingState and `battery`.
 
+**No push notifications are wired up beyond the platform's stock low-battery alert on the
+`battery` capability** — confirmed 2026-09-01, nothing fires for cleaning-complete, stuck/error
+(DP17), or dock-return. That's the current state, not a bug; would need SmartThings Rules or a
+custom notification capability to add.
+
 DP17 is a 9-bit field but is published as friendly text (`"None"`, or comma-joined names)
 because **array attributes have no friendly rendering in the app at all** — a `{{attr.value}}`
 template on an array dumps raw JSON.

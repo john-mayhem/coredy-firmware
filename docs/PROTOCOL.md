@@ -83,9 +83,9 @@ latter turned out wrong (see DP101), so every row below was re-derived from the 
 | DP | Name | Type | Values |
 |---|---|---|---|
 | 1 | `power` | bool | `true` while awake. `false` never observed — likely physical-switch-only. |
-| 14 | `area_cleaned` | value | raw ÷ 10 = m² |
+| 14 | `area_cleaned` | value | raw ÷ 10 = m² — **suspected stale**, see below |
 | **17** | `error` | bitfield | `0` ok · `1` cliff · `2` imp · `4` whl · `8` brush · `16` fan · `32` roller_brush · `64` low_power · `128` give_up · `256` no_dust — exact bits verified live against real cliff faults |
-| **101** | `status` | enum | `0` standby · `1` paused · `2` cleaning · `4` returning to base · `5` charging |
+| **101** | `status` | enum | `0` standby · `1` paused · `2` cleaning · `4` returning to base · `5` charging · `7` charged |
 | **102** | `command` (cleaning mode) | enum | `0` auto · `2` wall_follow/edge · `3` spot · `4` small_room · `5` find_sta/home · `6` cliff-fault |
 | **104** | `fan_speed` (suction) | enum | `0` Low · `1` Medium · `2` High — **state-gated**, see below |
 | 107 | `clean_time` | value | minutes |
@@ -103,10 +103,24 @@ latter turned out wrong (see DP101), so every row below was re-derived from the 
 ### Notes on the tricky ones
 
 **DP101 order is empirical, not schematic.** The YAML's alphabetical ordering does *not* match
-the wire indices — proven by the `returning`=4 anchor. Five of eight states are confirmed;
-`charged`, `cleaning_complete` and one further charging variant still need a full charge cycle
-and a clean run that actually finishes. The firmware logs any unmapped value as
+the wire indices — proven by the `returning`=4 anchor. Six of eight states are confirmed;
+`7`=`charged` was captured 2026-09-01 (firmware logged `DP101=7 is an unconfirmed state` while
+docked, `DP112` still `0`/paused at the time — physically checked, battery was in fact full) and
+the DP map above updated accordingly. `cleaning_complete` and one further charging variant still
+need a clean run that actually finishes. The firmware logs any unmapped value as
 `DP101=N is an unconfirmed state`.
+
+**A 2026-09-01 real run (~77+ min, suction forced to High mid-run) ended by returning to dock at
+~10% battery, not by finishing coverage** — confirming the low-battery-abort path is real and
+reachable well before whatever the `cleaning_complete` heuristic would be. Still no capture of
+that DP101 value or of a genuine coverage-complete finish — every observed run so far has ended
+on low battery.
+
+**DP14 `area_cleaned` looked stuck at ~5 m² for the entire 2026-09-01 run**, despite ~77+ minutes
+of real cleaning. Two live captures aren't enough to say which — worth checking next time whether
+it's (a) cached/only pushed once per session rather than re-polled, (b) state-gated like DP104/120
+and silently rejecting re-reads while running, or (c) a genuine STM32-side dead-reckoning bug (no
+LIDAR on this model, so it's some estimate, not a real map).
 
 **DP102 `6` is undocumented and Coredy-specific.** It fires whenever the cliff sensor trips
 mid-clean. Not in the shared Mellerware schema. DP102=`5` *is* the docking control — there is
